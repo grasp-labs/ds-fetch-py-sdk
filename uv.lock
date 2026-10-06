@@ -612,7 +612,7 @@ wheels = [
 
 [[package]]
 name = "ds-fetch-cli"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "ds-fetch-py-sdk" },
@@ -629,7 +629,7 @@ requires-dist = [
 
 [[package]]
 name = "ds-fetch-py-sdk"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/sdk" }
 dependencies = [
     { name = "httpx" },

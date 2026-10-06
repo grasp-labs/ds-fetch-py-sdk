@@ -1,6 +1,6 @@
 [project]
 name = "ds-fetch-cli"
-version = "0.1.0"
+version = "1.0.0"
 description = "aic-fetch: the command line for AI Commons Fetch. SQL and natural-language queries over your data lake."
 readme = "README.md"
 license = "Apache-2.0"
@@ -23,7 +23,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "ds-fetch-py-sdk==0.1.0",
+    "ds-fetch-py-sdk==1.0.0",
     "rich>=13.7,<15.0.0",
     "typer>=0.12,<1.0.0",
 ]
