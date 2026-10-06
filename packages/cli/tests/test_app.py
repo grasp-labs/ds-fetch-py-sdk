@@ -13,13 +13,21 @@ DATASET = {
     "name": "gold.d1",
     "columns": [{"name": "dept", "type": "VARCHAR"}, {"name": "n", "type": "BIGINT"}],
     "partition_columns": ["dept"],
+    "file_count": 4,
+    "row_count": 2500,
+    "byte_size": 81920,
 }
+VALIDATION = {"sql": 'SELECT dept FROM gold."d1"', "datasets": ["gold.d1"], "columns": DATASET["columns"]}
 RESULT = {"columns": DATASET["columns"], "rows": [["eng", None]], "row_count": 1, "truncated": True, "elapsed_ms": 5}
 runner = CliRunner()
 
 
 def handler(req):
     path = req.url.path
+    if path.endswith("/query/validate/"):
+        if json.loads(req.content)["sql"] == "bad":
+            return httpx.Response(422, json={"details": [{"field": "sql", "loc": "body", "code": "unknown_column"}]})
+        return httpx.Response(200, json=VALIDATION)
     if path.endswith("/query/"):
         sql = json.loads(req.content)["sql"]
         if sql == "bad":
@@ -59,6 +67,19 @@ def test_query_reads_stdin_and_prints_json():
     assert json.loads(result.stdout) == [{"dept": "SELECT 2", "n": None}]
 
 
+def test_validate_shows_the_sql_its_datasets_and_columns():
+    result = invoke("validate", "SELECT dept FROM gold.d1")
+    assert result.exit_code == 0, result.output
+    assert 'SELECT dept FROM gold."d1"' in result.stdout and "VARCHAR" in result.stdout
+    assert "reads gold.d1" in result.stderr
+    assert json.loads(invoke("--json", "validate", "-", stdin="SELECT 1").stdout)["datasets"] == ["gold.d1"]
+
+
+def test_validate_reports_invalid_sql():
+    result = invoke("validate", "bad")
+    assert result.exit_code == 1 and "unknown_column" in str(result.exception)
+
+
 def test_ask_shows_sql_then_runs_it():
     result = invoke("ask", "how many?", "-d", "gold.d1")
     assert "SELECT 1" in result.stderr and "SELECT 1" in result.stdout
@@ -81,16 +102,40 @@ def test_fresh_bypasses_the_index_on_every_read(monkeypatch):
 
 
 def test_datasets_dataset_tools_health():
-    assert "gold.d1" in invoke("datasets").stdout
+    listed = invoke("datasets").stdout
+    assert "gold.d1" in listed and "2,500" in listed and "81.9 kB" in listed
     assert json.loads(invoke("--json", "datasets").stdout)[0]["partition_columns"] == ["dept"]
-    out = invoke("dataset", "gold.d1").stdout
-    assert 'In SQL: gold."d1"' in out and "✓" in out
+    shown = invoke("dataset", "gold.d1")
+    assert 'In SQL: gold."d1"' in shown.stdout and "✓" in shown.stdout
+    assert "4 files · 2,500 rows · 81.9 kB" in shown.stderr
     assert json.loads(invoke("--json", "dataset", "gold.d1").stdout)["name"] == "gold.d1"
     tools = invoke("tools").stdout
     assert "List." in tools and "More" not in tools
     assert json.loads(invoke("--json", "tools").stdout)[0]["tool_id"] == "ls"
     assert "Server is running." in invoke("health").stdout
     assert json.loads(invoke("--json", "health").stdout)["version"] == "v1.0.0"
+
+
+def test_datasets_filters_by_name(monkeypatch):
+    def recording(req):
+        assert req.url.params.get_list("name") == ["gold.d1", "gold.d2"]
+        return handler(req)
+
+    monkeypatch.setattr(cli, "Fetch", lambda env: Fetch(env, token="t", transport=httpx.MockTransport(recording)))
+    assert invoke("datasets", "-n", "gold.d1", "-n", "gold.d2").exit_code == 0
+
+
+def test_runs_show_no_rows_or_bytes(monkeypatch):
+    run = {"name": "silver.p/j", "columns": [], "partition_columns": [], "file_count": 2}
+
+    def without_sizes(req):
+        if req.url.path.endswith("/datasets/"):
+            return httpx.Response(200, json={"data": [run], "page": {"has_next": False}})
+        return httpx.Response(200, json=run)
+
+    monkeypatch.setattr(cli, "Fetch", lambda env: Fetch(env, token="t", transport=httpx.MockTransport(without_sizes)))
+    assert invoke("datasets").stdout.count("NULL") == 2
+    assert invoke("dataset", "silver.p/j").stderr.strip() == "2 files"
 
 
 def test_login_and_logout(monkeypatch):

@@ -146,6 +146,63 @@ def test_dataset_name_is_url_encoded():
     assert make(handler).dataset("silver.p/j").ref == 'silver."p/j"'
 
 
+def test_datasets_sends_repeated_names():
+    def handler(req):
+        assert req.url.params.get_list("name") == ["gold.a", "gold.b"]
+        return httpx.Response(200, json={"data": [], "page": {"has_next": False}})
+
+    assert list(make(handler).datasets(names=["gold.a", "gold.b"])) == []
+
+
+def test_datasets_holds_the_page_size_to_what_the_api_serves():
+    sent = []
+
+    def handler(req):
+        sent.append(req.url.params["page_size"])
+        return httpx.Response(200, json={"data": [], "page": {"has_next": False}})
+
+    for asked in (1_000_000, 0, 20):
+        list(make(handler).datasets(page_size=asked))
+    assert sent == ["100", "1", "20"]
+
+
+def test_validate_returns_the_validation():
+    def handler(req):
+        assert req.url.path.endswith("/query/validate/")
+        assert json.loads(req.content) == {"sql": "SELECT n FROM gold.a"}
+        body = {"sql": 'SELECT n FROM gold."a"', "datasets": ["gold.a"], "columns": [{"name": "n", "type": "BIGINT"}]}
+        return httpx.Response(200, json=body)
+
+    v = make(handler).validate("SELECT n FROM gold.a")
+    assert (v.sql, v.datasets, v.columns[0].name) == ('SELECT n FROM gold."a"', ["gold.a"], "n")
+
+
+def test_validate_raises_on_invalid_sql():
+    def handler(req):
+        details = [{"field": "sql", "loc": "body", "code": "unknown_column", "message": "column not found"}]
+        return httpx.Response(422, json={"details": details})
+
+    with pytest.raises(QueryError, match="column not found"):
+        make(handler).validate("SELECT nope FROM gold.a")
+
+
+def test_dataset_sizes_are_read_when_present():
+    def handler(req):
+        ds = {"name": "gold.a", "columns": [], "partition_columns": [], "file_count": 4, "row_count": 2500, "byte_size": 81920}
+        return httpx.Response(200, json=ds)
+
+    ds = make(handler).dataset("gold.a")
+    assert (ds.file_count, ds.row_count, ds.byte_size) == (4, 2500, 81920)
+
+
+def test_run_has_no_sizes():
+    def handler(req):
+        return httpx.Response(200, json={"name": "silver.p/j", "columns": [], "partition_columns": []})
+
+    ds = make(handler).dataset("silver.p/j")
+    assert (ds.row_count, ds.byte_size) == (None, None)
+
+
 def test_ask_translates_with_tools_then_queries():
     def handler(req):
         if str(req.url) == f"{TOOLS}/tools/text_to_sql/invoke/":

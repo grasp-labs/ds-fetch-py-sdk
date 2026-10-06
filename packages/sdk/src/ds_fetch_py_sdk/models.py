@@ -50,11 +50,33 @@ class QueryResult:
 
 
 @dataclass(frozen=True)
+class Validation:
+    """SQL that would run, checked through binding without reading data."""
+
+    sql: str
+    """The canonical SQL."""
+    datasets: list[str]
+    """The datasets the SQL reads."""
+    columns: list[Column]
+    """The result columns a query would return."""
+
+    @classmethod
+    def parse(cls, raw: dict[str, Any]) -> Validation:
+        return cls(raw["sql"], raw["datasets"], _columns(raw["columns"]))
+
+
+@dataclass(frozen=True)
 class Dataset:
     name: str
     """`gold.<dataset-id>` or `<bronze|silver>.<pipeline-id>/<job-id>`."""
     columns: list[Column]
     partition_columns: list[str] = field(default_factory=list)
+    file_count: int | None = None
+    """Data files in the partitions you may read."""
+    row_count: int | None = None
+    """Rows in the partitions you may read. Gold datasets only."""
+    byte_size: int | None = None
+    """Parquet bytes in the partitions you may read. Gold datasets only."""
 
     @property
     def ref(self) -> str:
@@ -64,7 +86,14 @@ class Dataset:
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> Dataset:
-        return cls(raw["name"], _columns(raw["columns"]), raw.get("partition_columns") or [])
+        return cls(
+            raw["name"],
+            _columns(raw["columns"]),
+            raw.get("partition_columns") or [],
+            raw.get("file_count"),
+            raw.get("row_count"),
+            raw.get("byte_size"),
+        )
 
 
 @dataclass(frozen=True)

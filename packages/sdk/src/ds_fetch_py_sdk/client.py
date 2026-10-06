@@ -16,12 +16,14 @@ from ._version import PACKAGE_NAME, __version__
 from .auth import BearerToken, BrowserLogin, ClientCredentials, PasswordLogin, TokenAuth, cached_session
 from .env import Environment, resolve
 from .errors import APIError, NetworkError
-from .models import Dataset, QueryResult, Tool, ToolResult, _columns
+from .models import Dataset, QueryResult, Tool, ToolResult, Validation, _columns
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 _FENCE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE)
+MAX_PAGE_SIZE = 100
+"""The largest dataset page the API serves; it lowers anything above this."""
 
 
 def _default_auth(env: Environment) -> httpx.Auth:
@@ -90,6 +92,10 @@ class Fetch:
             request_id=r.headers.get("X-Request-ID"),
         )
 
+    def validate(self, sql: str, *, fresh: bool = False) -> Validation:
+        """Check one SELECT as `query` would, without reading data. Invalid SQL raises `QueryError`."""
+        return Validation.parse(self._request("POST", self._url("/query/validate/"), json={"sql": sql}, fresh=fresh).json())
+
     def sql(self, question: str, *, datasets: Sequence[str] = ()) -> str:
         """Translate a natural-language question to SQL with ds-tools."""
         payload: dict[str, Any] = {"question": question}
@@ -101,11 +107,15 @@ class Fetch:
         """Answer a natural-language question: translate it to SQL, then run it."""
         return self.query(self.sql(question, datasets=datasets), fresh=fresh)
 
-    def datasets(self, *, page_size: int = 100, fresh: bool = False) -> Iterator[Dataset]:
-        """Every dataset and pipeline run you are granted, across pages."""
-        page = 1
+    def datasets(self, *, names: Sequence[str] = (), page_size: int = MAX_PAGE_SIZE, fresh: bool = False) -> Iterator[Dataset]:
+        """Every dataset and pipeline run you are granted, across pages; only `names` if given.
+
+        Names that do not exist or are not granted are left out. `page_size` is held to 1…`MAX_PAGE_SIZE`,
+        the range the API serves.
+        """
+        page, size = 1, max(1, min(page_size, MAX_PAGE_SIZE))
         while True:
-            params = {"page": page, "page_size": page_size}
+            params: dict[str, Any] = {"page": page, "page_size": size, "name": list(names)}
             body = self._request("GET", self._url("/datasets/"), params=params, fresh=fresh).json()
             yield from map(Dataset.parse, body["data"])
             if not body["page"]["has_next"]:

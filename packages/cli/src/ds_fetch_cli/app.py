@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 from rich import box
 from rich.console import Console
+from rich.filesize import decimal
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
@@ -52,6 +53,7 @@ HELP = "\n".join(
   aic-fetch -e dev login --email you@company.com
   aic-fetch -e dev datasets
   aic-fetch -e dev query 'SELECT * FROM gold."<dataset-id>" LIMIT 10'
+  aic-fetch -e dev validate 'SELECT * FROM gold."<dataset-id>"'
 
 \b
 [bold]Environments[/bold] (-e or $AIC_ENV, default prod): API, then sign-in""",
@@ -170,6 +172,14 @@ def _cell(value: Any) -> Text:
     return Text("NULL", style="dim") if value is None else _text(value)
 
 
+def _count(value: int | None) -> Text:
+    return _cell(value if value is None else f"{value:,}")
+
+
+def _size(value: int | None) -> Text:
+    return _cell(value if value is None else decimal(value))
+
+
 def _print_result(state: State, result: QueryResult) -> None:
     if state.json:
         _json(result.records())
@@ -251,6 +261,36 @@ def query(
 
 
 @app.command()
+def validate(
+    ctx: typer.Context,
+    sql: Annotated[str, typer.Argument(help="One SELECT, or - to read it from stdin.")],
+    fresh: Fresh = False,
+) -> None:
+    """Check one SQL SELECT without reading any data, and show what it would return.
+
+    Prints the canonical SQL, the datasets it reads and its result columns. Invalid SQL exits with code 1.
+
+    \b
+    [bold]Examples[/bold]
+      aic-fetch validate 'SELECT * FROM gold."<dataset-id>"'
+      aic-fetch --json validate - < report.sql | jq '.datasets'
+    """
+    state: State = ctx.obj
+    statement = sys.stdin.read() if sql == "-" else sql
+    with _fetch(state) as fetch, err.status("Validating SQL…"):
+        checked = fetch.validate(statement, fresh=fresh)
+    if state.json:
+        _json(asdict(checked))
+        return
+    out.print(Syntax(_plain(checked.sql), "sql", background_color="default"))
+    table = _table("column", "type")
+    for c in checked.columns:
+        table.add_row(_text(c.name), _text(c.type))
+    out.print(table)
+    err.print(_text(f"reads {', '.join(checked.datasets)}", "dim"))
+
+
+@app.command()
 def ask(
     ctx: typer.Context,
     question: Annotated[str, typer.Argument(help="Your question, in plain language.")],
@@ -279,24 +319,32 @@ def ask(
 
 
 @app.command()
-def datasets(ctx: typer.Context, fresh: Fresh = False) -> None:
-    """List the datasets you can query, with their column counts.
+def datasets(
+    ctx: typer.Context,
+    name: Annotated[list[str] | None, typer.Option("--name", "-n", help="Only this dataset, unquoted. Repeatable.")] = None,
+    fresh: Fresh = False,
+) -> None:
+    """List the datasets you can query, with their column counts and size.
+
+    Rows and bytes cover the partitions you may read, and only gold datasets have them.
 
     \b
     [bold]Examples[/bold]
       aic-fetch -e dev datasets
+      aic-fetch -e dev datasets -n gold.<dataset-id> -n gold.<other-id>
       aic-fetch -e local datasets --fresh
       aic-fetch --json datasets | jq -r '.[].name'
     """
     state: State = ctx.obj
     with _fetch(state) as fetch, err.status("Listing datasets…"):
-        found = list(fetch.datasets(fresh=fresh))
+        found = list(fetch.datasets(names=name or (), fresh=fresh))
     if state.json:
         _json([asdict(ds) for ds in found])
         return
-    table = _table("name", "columns", "partitions")
+    table = _table("name", "columns", "partitions", "files", "rows", "size")
     for ds in found:
-        table.add_row(_text(ds.name), str(len(ds.columns)), _text(", ".join(ds.partition_columns)))
+        sizes = (_count(ds.file_count), _count(ds.row_count), _size(ds.byte_size))
+        table.add_row(_text(ds.name), str(len(ds.columns)), _text(", ".join(ds.partition_columns)), *sizes)
     out.print(table)
 
 
@@ -306,7 +354,7 @@ def dataset(
     name: Annotated[str, typer.Argument(help="gold.<dataset-id> or <bronze|silver>.<pipeline-id>/<job-id>.")],
     fresh: Fresh = False,
 ) -> None:
-    """Show one dataset's columns, and how to name it in SQL.
+    """Show one dataset's columns and size, and how to name it in SQL.
 
     \b
     [bold]Example[/bold]
@@ -323,6 +371,11 @@ def dataset(
         table.add_row(_text(c.name), _text(c.type), "✓" if c.name in ds.partition_columns else "")
     out.print(_text(f"In SQL: {ds.ref}", "bold"))
     out.print(table)
+    counts = [f"{value:,} {noun}" for noun, value in (("files", ds.file_count), ("rows", ds.row_count)) if value is not None]
+    if ds.byte_size is not None:
+        counts.append(decimal(ds.byte_size))
+    if counts:
+        err.print(_text(" · ".join(counts), "dim"))
 
 
 @app.command()
