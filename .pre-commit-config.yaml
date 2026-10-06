@@ -1,0 +1,36 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        language: system
+        entry: uv run ruff check --fix --exit-non-zero-on-fix
+        files: ^packages/.*\.py$
+      - id: ruff-format
+        name: ruff-format
+        language: system
+        entry: uv run ruff format
+        files: ^packages/.*\.py$
+      - id: mypy
+        name: mypy
+        language: system
+        entry: uv run mypy
+        pass_filenames: false
+        files: ^packages/[^/]+/src/
+      - id: bandit
+        name: bandit
+        language: system
+        entry: uv run bandit -q -ll -r packages/sdk/src packages/cli/src
+        pass_filenames: false
+        files: ^packages/[^/]+/src/

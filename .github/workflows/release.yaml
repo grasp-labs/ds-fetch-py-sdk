@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches both packages and the CLI's SDK pin
+        run: |
+          python3 - <<'EOF'
+          import os, sys, tomllib
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          sdk = tomllib.load(open("packages/sdk/pyproject.toml", "rb"))["project"]
+          cli = tomllib.load(open("packages/cli/pyproject.toml", "rb"))["project"]
+          found = {"sdk": sdk["version"], "cli": cli["version"], "cli pin": next(
+              d.split("==")[1] for d in cli["dependencies"] if d.startswith("ds-fetch-py-sdk=="))}
+          if set(found.values()) != {tag}:
+              sys.exit(f"tag v{tag} does not match {found}; run make bump VERSION={tag}")
+          EOF
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_KEY }}
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+
+  release-fragment:
+    needs: github-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [ds-fetch-py-sdk, ds-fetch-cli]
+    env:
+      DOMAIN: ds
+      SERVICE_GROUP: packages
+      SERVICE_NAME: ${{ matrix.service }}
+      TABLE_NAME: ds-coordination-release-fragments-prod
+      AWS_REGION: eu-north-1
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Push release fragment to ds-coordination
+        run: |
+          VERSION="$GITHUB_REF_NAME"
+          aws dynamodb put-item --table-name "$TABLE_NAME" --region "$AWS_REGION" --item "{
+            \"PK\": {\"S\": \"$VERSION\"},
+            \"SK\": {\"S\": \"$DOMAIN#$SERVICE_GROUP#$SERVICE_NAME\"},
+            \"GSI1PK\": {\"S\": \"service#$SERVICE_NAME\"},
+            \"GSI1SK\": {\"S\": \"$VERSION\"},
+            \"GSI2PK\": {\"S\": \"latest#$DOMAIN#$SERVICE_GROUP\"},
+            \"GSI2SK\": {\"S\": \"$SERVICE_NAME\"},
+            \"domain\": {\"S\": \"$DOMAIN\"},
+            \"serviceGroup\": {\"S\": \"$SERVICE_GROUP\"},
+            \"serviceName\": {\"S\": \"$SERVICE_NAME\"},
+            \"version\": {\"S\": \"$VERSION\"},
+            \"commit\": {\"S\": \"$GITHUB_SHA\"},
+            \"artifact\": {\"S\": \"https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION\"},
+            \"timestamp\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+          }"
