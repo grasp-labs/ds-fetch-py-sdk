@@ -16,7 +16,7 @@ from ds_fetch_py_sdk import Fetch
 
 with Fetch("dev") as fetch:  # signs in with the browser on first use
     for ds in fetch.datasets():
-        print(ds.name, [c.name for c in ds.columns])
+        print(ds.name, ds.row_count, [c.name for c in ds.columns])
 
     result = fetch.query("""
         SELECT department, count(*) AS n
@@ -75,11 +75,19 @@ Expired tokens are refreshed, and a 401 triggers one renewal and retry.
 - `query(sql, fresh=False)` runs one `SELECT` and returns a `QueryResult` with `columns`, `rows`,
   `records()`, `to_pandas()`, `truncated`, `elapsed_ms`, `cache` and `request_id`.
   `fresh=True` reads S3 as it is now, bypassing the index and cache.
-- `datasets()` iterates every granted dataset across pages; `dataset(name)` returns one.
-  `Dataset.ref` is the name quoted for SQL.
+- `validate(sql)` checks one `SELECT` as `query` would, without reading data, and returns a
+  `Validation` with the canonical `sql`, the `datasets` it reads and the result `columns`.
+  Invalid SQL raises `QueryError`, exactly as a query does.
+- `datasets(names=..., page_size=...)` iterates every granted dataset across pages, or only the
+  names you ask for; `dataset(name)` returns one. `Dataset.ref` is the name quoted for SQL, and
+  `file_count`, `row_count` and `byte_size` size the partitions you may read (rows and bytes for
+  gold only). Pages hold at most `MAX_PAGE_SIZE` (100) datasets, as the API serves them.
 - `sql(question, datasets=...)` translates a question to SQL with ds-tools; `ask(...)` also runs it.
 - `tools.list()`, `tools.get(id)` and `tools.invoke(id, input)` reach every ds-tools tool with the
   same sign-in.
+
+`validate`, `datasets` and `dataset` are lookups: they have their own rate-limit budget, never
+spend query allowance, and take no concurrency slot.
 
 Retries follow the API contract: connection failures, timeouts, 429, 500, 503 and 5xx responses
 without a JSON body are retried up to 3 attempts with exponential backoff, jitter and `Retry-After`. Everything else raises at once.

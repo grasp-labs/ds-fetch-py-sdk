@@ -2,13 +2,14 @@
 
 from ._version import PACKAGE_NAME, __version__
 from .auth import BearerToken, BrowserLogin, ClientCredentials, OAuth, PasswordLogin, TokenAuth, cached_session
-from .client import Fetch, Tools
+from .client import MAX_PAGE_SIZE, Fetch, Tools
 from .env import ENVIRONMENTS, Environment
 from .errors import AICError, APIError, AuthError, NetworkError, QueryError
-from .models import Column, Dataset, FieldError, QueryResult, Tool, ToolResult
+from .models import Column, Dataset, FieldError, QueryResult, Tool, ToolResult, Validation
 
 __all__ = [
     "ENVIRONMENTS",
+    "MAX_PAGE_SIZE",
     "PACKAGE_NAME",
     "AICError",
     "APIError",
@@ -30,6 +31,7 @@ __all__ = [
     "Tool",
     "ToolResult",
     "Tools",
+    "Validation",
     "__version__",
     "cached_session",
 ]

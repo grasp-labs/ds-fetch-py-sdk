@@ -14,10 +14,12 @@ aic-fetch --install-completion  # optional: tab completion for your shell
 ```bash
 aic-fetch -e dev login                       # browser sign-in, including SSO
 aic-fetch -e dev login --email me@aic.no     # email and password; prompts for MFA if enabled
-aic-fetch -e dev datasets                    # what you can query
+aic-fetch -e dev datasets                    # what you can query, with files, rows and size
+aic-fetch -e dev datasets -n gold.5003105c-8a84-5f77-ab74-5e57003112b8   # only these datasets
 aic-fetch -e dev dataset gold.5003105c-8a84-5f77-ab74-5e57003112b8
 aic-fetch -e dev query 'SELECT department, count(*) FROM gold."5003105c-8a84-5f77-ab74-5e57003112b8" GROUP BY 1'
 aic-fetch -e dev query - < report.sql        # SQL from a file or pipe
+aic-fetch -e dev validate - < report.sql     # check the SQL without reading any data
 aic-fetch -e dev ask "Headcount per department?" -d gold.5003105c-8a84-5f77-ab74-5e57003112b8
 aic-fetch -e dev ask "Headcount per department?" --sql-only
 aic-fetch -e dev tools                       # ds-tools you can invoke
@@ -30,7 +32,7 @@ aic-fetch -e dev logout
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-e`, `--env` | `local`, `dev` or `prod`. Default: `$AIC_ENV`, then `prod`                                                                                                  |
 | `--json`      | JSON on stdout for scripts, e.g. `aic-fetch --json query '…' | jq`                                                                                          |
-| `--fresh`     | On `datasets`, `dataset`, `query`, `ask`: read S3 directly, bypassing the index and cache. Default: `$AIC_FRESH`. Needed locally without `ds-fetch-indexer` |
+| `--fresh`     | On `datasets`, `dataset`, `query`, `validate`, `ask`: read S3 directly, bypassing the index and cache. Default: `$AIC_FRESH`. Needed locally without `ds-fetch-indexer` |
 | `--version`   | CLI and SDK versions                                                                                                                                        |
 
 
