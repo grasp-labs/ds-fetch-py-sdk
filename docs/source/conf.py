@@ -16,7 +16,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
 ]
-autoapi_dirs = ["../../packages/sdk/src", "../../packages/cli/src"]
+autoapi_dirs = ["../../packages/sdk/src"]  # the CLI is documented in cli.md, not as an API
 autoapi_options = ["members", "show-inheritance", "imported-members"]
 myst_heading_anchors = 3
 exclude_patterns = ["_build", ".DS_Store"]

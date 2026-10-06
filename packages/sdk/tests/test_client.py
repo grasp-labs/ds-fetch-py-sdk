@@ -210,3 +210,18 @@ def test_environment_override(monkeypatch):
     assert Fetch(token="t").env.fetch_url == "http://localhost:8080/api/fetch-dev/v1"
     with pytest.raises(ValueError):
         Fetch("staging", token="t")
+
+
+@pytest.mark.parametrize("url", ["http://grasp-daas.com/api/fetch/v1", "http://127.0.0.1.evil.example/x", "ftp://localhost/x"])
+def test_credentials_never_travel_in_clear_text(monkeypatch, url):
+    monkeypatch.setenv("AIC_FETCH_URL", url)
+    with pytest.raises(ValueError, match="must use https"):
+        Fetch("dev", token="t")
+
+
+def test_tool_ids_stay_one_path_segment():
+    def handler(req):
+        assert req.url.raw_path == b"/api/tools-dev/v1/tools/..%2F..%2Fadmin/invoke/"
+        return httpx.Response(200, json={"tool_use_id": "u"})
+
+    make(handler).tools.invoke("../../admin", {})

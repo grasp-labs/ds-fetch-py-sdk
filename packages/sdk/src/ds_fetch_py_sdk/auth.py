@@ -5,10 +5,9 @@
 - `PasswordLogin`: email and password at `/auth/login/`, with TOTP MFA when enabled.
 - `ClientCredentials`: OAuth client credentials, for machines.
 
-OAuth flows discover the identity server from the API's protected-resource metadata
-(RFC 9728), falling back to the environment's issuer, then read its endpoints from the
-authorization-server metadata (RFC 8414). Tokens are bound to the API with `resource`
-(RFC 8707).
+Every flow signs in at the environment's issuer, never at one a server names. OAuth flows read
+its endpoints from its authorization-server metadata (RFC 8414), which must name that issuer,
+and bind tokens to the API with `resource` (RFC 8707).
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import json
 import os
 import secrets
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
+from .env import require_secure
 from .errors import AuthError, _json
 
 if TYPE_CHECKING:
@@ -77,7 +78,7 @@ class TokenAuth(httpx.Auth):
     kind: ClassVar[str] = ""
 
     def __init__(self, *, issuer: str | None = None, cache: Path | bool = False) -> None:
-        self.issuer = issuer
+        self.issuer = require_secure(issuer, "issuer") if issuer else None
         self.cache = default_cache() if cache is True else cache or None
         self._env: Environment | None = None
         self._token: _Token | None = None
@@ -93,6 +94,10 @@ class TokenAuth(httpx.Auth):
         if self._env is None:
             raise AuthError("auth is not bound to an environment; pass it to Fetch(auth=...)")
         return self._env
+
+    @property
+    def _issuer(self) -> str:
+        return (self.issuer or self.env.issuer).rstrip("/")
 
     def access_token(self, *, force: bool = False) -> str:
         with self._lock:
@@ -185,21 +190,23 @@ class OAuth(TokenAuth):
 
     @property
     def metadata(self) -> dict[str, Any]:
-        """The identity server's RFC 8414 metadata."""
+        """The identity server's RFC 8414 metadata, checked to be its own and to use HTTPS."""
         if self._meta is None:
-            issuer = (self.issuer or self._discover_issuer()).rstrip("/")
+            issuer = self._issuer
             r = self._send("GET", f"{issuer}/.well-known/oauth-authorization-server")
             if not r.is_success:
                 raise AuthError(f"no authorization server metadata at {issuer} ({r.status_code})")
-            self._meta = _json(r)
+            meta = _json(r)
+            if str(meta.get("issuer", "")).rstrip("/") != issuer:
+                raise AuthError(f"metadata at {issuer} names issuer {meta.get('issuer')!r}; refusing it")
+            for key in ("authorization_endpoint", "token_endpoint", "registration_endpoint"):
+                if key in meta:
+                    try:
+                        require_secure(str(meta[key]), key)
+                    except ValueError as e:
+                        raise AuthError(str(e)) from None
+            self._meta = meta
         return self._meta
-
-    def _discover_issuer(self) -> str:
-        try:
-            r = self._http.get(f"{self.env.fetch_url}/.well-known/oauth-protected-resource")
-            return str(r.json()["authorization_servers"][0]) if r.is_success else self.env.issuer
-        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
-            return self.env.issuer
 
     def _refresh(self, refresh: str) -> _Token:
         return self._grant("refresh_token", refresh_token=refresh)
@@ -379,10 +386,6 @@ class PasswordLogin(TokenAuth):
         self._password = password
         self.mfa_code = mfa_code
 
-    @property
-    def _issuer(self) -> str:
-        return (self.issuer or self.env.issuer).rstrip("/")
-
     def _state(self) -> dict[str, Any]:
         return {"email": self.email}
 
@@ -458,9 +461,15 @@ def _read(cache: Path | None) -> dict[str, Any]:
 
 
 def _write(cache: Path | None, entries: dict[str, Any]) -> None:
+    """Replace the cache atomically with a new 0600 file, so a symlink or wider mode on the old one never matters."""
     if cache is None:
         return
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(cache, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(entries, f, indent=2)
+    cache.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=cache.parent, prefix=f".{cache.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(entries, f, indent=2)
+        Path(tmp).replace(cache)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise

@@ -38,7 +38,8 @@ with Fetch("dev") as fetch:  # signs in with the browser on first use
 | `prod` (default) | `https://grasp-daas.com/api/fetch/v1` | `https://auth.grasp-daas.com` |
 
 Pick one with `Fetch("local")` or `AIC_ENV=local`. Override single URLs with `AIC_FETCH_URL`,
-`AIC_TOOLS_URL` and `AIC_ISSUER`, or pass your own `Environment(...)`.
+`AIC_TOOLS_URL` and `AIC_ISSUER`, or pass your own `Environment(...)`. Every URL must use HTTPS,
+except on `localhost`, so tokens and passwords never travel in clear text.
 API docs: [prod](https://grasp-daas.com/api/fetch/v1/docs/) ·
 [dev](https://grasp-daas.com/api/fetch-dev/v1/docs/) ·
 [local](http://localhost:8080/api/fetch-dev/v1/docs/).
@@ -59,12 +60,14 @@ browser sign-in.
 `PasswordLogin` posts to the identity server's `/auth/login/`. For accounts with MFA, pass
 `mfa_code=` as a code or as a callable that takes the number of digits and returns the code. It
 refreshes with `/auth/token/refresh/` and caches the session like browser sign-in, but never the
-password. OAuth flows discover the identity server from the API's protected-resource
-metadata (RFC 9728) and its endpoints from RFC 8414 metadata, and bind tokens to Fetch with
-`resource` (RFC 8707). Browser sign-in uses authorization code + PKCE on
-`http://127.0.0.1:8976/callback`, registers a public client on first use (RFC 7591), offers
-whatever SSO your tenant has configured, and caches the session in
-`~/.config/aic/credentials.json` (mode 600). Pass `on_url=` to show the sign-in URL your own way.
+password.
+
+Every flow signs in at the environment's issuer, never at one a server names. OAuth flows read
+its endpoints from RFC 8414 metadata, which must name that issuer and use HTTPS, and bind tokens
+to Fetch with `resource` (RFC 8707). Browser sign-in uses authorization code + PKCE on
+`http://127.0.0.1:8976/callback`, registers a public client on first use (RFC 7591), and offers
+whatever SSO your tenant has configured. Sessions are cached in `~/.config/aic/credentials.json`,
+replaced atomically as a mode-600 file. Pass `on_url=` to show the sign-in URL your own way.
 Expired tokens are refreshed, and a 401 triggers one renewal and retry.
 
 ## Querying

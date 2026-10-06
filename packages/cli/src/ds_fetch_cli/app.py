@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from dataclasses import asdict, dataclass
 from enum import StrEnum
@@ -11,7 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 from rich import box
 from rich.console import Console
-from rich.markup import escape
+from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
@@ -120,11 +122,29 @@ def main(
     try:
         ctx.obj = State(resolve(env), as_json)
     except ValueError as e:
-        raise typer.BadParameter(str(e), param_hint="--env / $AIC_ENV") from e
+        raise typer.BadParameter(str(e), param_hint="environment") from e
+
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _plain(value: Any) -> str:
+    """Text from a server or the data lake, unable to drive the terminal: control characters become �."""
+    return _CONTROL.sub("\ufffd", str(value))
+
+
+def _text(value: Any, style: str = "") -> Text:
+    """`_plain`, shown literally: Rich markup in it is not interpreted."""
+    return Text(_plain(value), style=style)
+
+
+def _link(url: str) -> Text:
+    url = _plain(url)
+    return Text(url, style=Style(link=url))
 
 
 def _show_sign_in(url: str) -> None:
-    err.print(f"Opening your browser to sign in. If it does not open, visit:\n[link={url}]{escape(url)}[/link]")
+    err.print("Opening your browser to sign in. If it does not open, visit:\n", _link(url), sep="")
 
 
 def _fetch(state: State) -> Fetch:
@@ -135,18 +155,19 @@ def _fetch(state: State) -> Fetch:
 
 
 def _json(data: Any) -> None:
-    typer.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    text = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+    typer.echo(_CONTROL.sub(lambda m: f"\\u{ord(m[0]):04x}", text))
 
 
 def _table(*headers: str) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", show_edge=False)
     for header in headers:
-        table.add_column(header)
+        table.add_column(_text(header))
     return table
 
 
 def _cell(value: Any) -> Text:
-    return Text("NULL", style="dim") if value is None else Text(str(value))
+    return Text("NULL", style="dim") if value is None else _text(value)
 
 
 def _print_result(state: State, result: QueryResult) -> None:
@@ -160,7 +181,7 @@ def _print_result(state: State, result: QueryResult) -> None:
     note = f"{result.row_count} rows · {result.elapsed_ms} ms"
     if result.cache:
         note += f" · cache {result.cache}"
-    err.print(f"[dim]{note}[/dim]" + (" [yellow]· truncated[/yellow]" if result.truncated else ""))
+    err.print(_text(note, "dim"), Text("· truncated", "yellow") if result.truncated else "")
 
 
 def _prompt_mfa(digits: int) -> str:
@@ -173,13 +194,10 @@ def login(
     email: Annotated[
         str | None, typer.Option("--email", "-u", help="Sign in with email and password instead of the browser.")
     ] = None,
-    password: Annotated[
-        str | None, typer.Option(envvar="AIC_PASSWORD", help="Password for --email. Prompted when omitted.", show_default=False)
-    ] = None,
 ) -> None:
     """Sign in to the AI Commons identity server.
 
-    Opens your browser, which supports SSO. With --email, uses email and password and asks for an MFA code if needed.
+    Opens your browser, which supports SSO. With --email, asks for the password (or reads $AIC_PASSWORD) and an MFA code if needed.
 
     The session is kept per environment for a day.
 
@@ -190,9 +208,9 @@ def login(
     """
     state: State = ctx.obj
     err.print(BANNER)
-    err.print(f"Identity server: [link={state.env.issuer}]{state.env.issuer}[/link]")
+    err.print("Identity server:", _link(state.env.issuer))
     if email:
-        secret = password or str(typer.prompt("Password", hide_input=True, err=True))
+        secret = os.environ.get("AIC_PASSWORD") or str(typer.prompt("Password", hide_input=True, err=True))
         PasswordLogin(email, secret, mfa_code=_prompt_mfa).bind(state.env).login()
     else:
         auth = BrowserLogin(on_url=_show_sign_in).bind(state.env)
@@ -252,9 +270,9 @@ def ask(
         with err.status("Writing SQL…"):
             sql = fetch.sql(question, datasets=dataset or ())
         if sql_only:
-            typer.echo(sql)
+            typer.echo(_plain(sql))
             return
-        err.print(Syntax(sql, "sql", background_color="default"))
+        err.print(Syntax(_plain(sql), "sql", background_color="default"))
         with err.status("Running query…"):
             result = fetch.query(sql, fresh=fresh)
     _print_result(state, result)
@@ -278,7 +296,7 @@ def datasets(ctx: typer.Context, fresh: Fresh = False) -> None:
         return
     table = _table("name", "columns", "partitions")
     for ds in found:
-        table.add_row(ds.name, str(len(ds.columns)), ", ".join(ds.partition_columns))
+        table.add_row(_text(ds.name), str(len(ds.columns)), _text(", ".join(ds.partition_columns)))
     out.print(table)
 
 
@@ -302,8 +320,8 @@ def dataset(
         return
     table = _table("column", "type", "partition")
     for c in ds.columns:
-        table.add_row(c.name, c.type, "✓" if c.name in ds.partition_columns else "")
-    out.print(Text(f"In SQL: {ds.ref}", style="bold"))
+        table.add_row(_text(c.name), _text(c.type), "✓" if c.name in ds.partition_columns else "")
+    out.print(_text(f"In SQL: {ds.ref}", "bold"))
     out.print(table)
 
 
@@ -318,7 +336,7 @@ def tools(ctx: typer.Context) -> None:
         return
     table = _table("tool", "effect", "description")
     for t in found:
-        table.add_row(t.tool_id, t.effect, t.description.partition("\n")[0])
+        table.add_row(_text(t.tool_id), _text(t.effect), _text(t.description.partition("\n")[0]))
     out.print(table)
 
 
@@ -331,7 +349,7 @@ def health(ctx: typer.Context) -> None:
     if state.json:
         _json(status)
         return
-    out.print(f"[green]●[/green] {status['message']}  [dim]{state.env.fetch_url} · {status['version']}[/dim]")
+    out.print(Text("● ", "green") + _text(status["message"]) + _text(f"  {state.env.fetch_url} · {status['version']}", "dim"))
 
 
 def run() -> None:
@@ -339,5 +357,5 @@ def run() -> None:
     try:
         app()
     except AICError as e:
-        err.print(f"[red]error:[/red] {escape(str(e))}")
+        err.print(Text("error: ", "red") + _text(e))
         raise SystemExit(1) from None

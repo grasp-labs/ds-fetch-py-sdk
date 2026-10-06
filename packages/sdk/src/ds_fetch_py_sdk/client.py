@@ -174,7 +174,7 @@ class Tools:
             params = {"since_version": body["next_page_token"]}
 
     def get(self, tool_id: str) -> Tool:
-        return Tool.parse(self._c._request("GET", self._url(f"/tools/{quote(tool_id)}/")).json())
+        return Tool.parse(self._c._request("GET", self._url(f"/tools/{quote(tool_id, safe='')}/")).json())
 
     def invoke(self, tool_id: str, input: dict[str, Any], *, timeout_ms: int = 0) -> ToolResult:
         """Run a tool. Retries reuse the same `tool_use_id`, so they are idempotent."""
@@ -183,7 +183,7 @@ class Tools:
             "input": input,
             "timeout_ms": timeout_ms,
         }
-        url = self._url(f"/tools/{quote(tool_id)}/invoke/")
+        url = self._url(f"/tools/{quote(tool_id, safe='')}/invoke/")
         body = self._c._request("POST", url, json=payload).json()
         return ToolResult(
             body["tool_use_id"],

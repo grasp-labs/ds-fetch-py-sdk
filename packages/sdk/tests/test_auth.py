@@ -15,8 +15,6 @@ META = {
 
 def identity(tokens, seen):
     def handler(req):
-        if req.url.path == "/api/fetch-dev/v1/.well-known/oauth-protected-resource":
-            return httpx.Response(404)
         if req.url.path == "/.well-known/oauth-authorization-server":
             return httpx.Response(200, json=META)
         if req.url.path == "/oauth/token/":
@@ -74,12 +72,10 @@ def test_browser_login_refreshes_from_cache(tmp_path):
     assert '"r2"' in cache.read_text()
 
 
-def failing(meta_status=200, token=None):
+def failing(meta_status=200, token=None, meta=META):
     def handler(req):
-        if req.url.path.endswith("oauth-protected-resource"):
-            raise httpx.ConnectError("down")
         if req.url.path == "/.well-known/oauth-authorization-server":
-            return httpx.Response(meta_status, json=META)
+            return httpx.Response(meta_status, json=meta)
         if token is None:
             raise httpx.ConnectError("down")
         return httpx.Response(400, json=token)
@@ -93,6 +89,9 @@ def failing(meta_status=200, token=None):
         (failing(meta_status=404), "no authorization server metadata"),
         (failing(token={"error": "invalid_client"}), "invalid_client"),
         (failing(), "cannot reach .*: down"),
+        (failing(meta={**META, "issuer": "https://evil.example"}), "names issuer 'https://evil.example'; refusing"),
+        (failing(meta={k: v for k, v in META.items() if k != "issuer"}), "names issuer None"),
+        (failing(meta={**META, "token_endpoint": "http://evil.example/token"}), "token_endpoint must use https"),
     ],
 )
 def test_token_failures_raise_auth_error(http, match):
@@ -118,6 +117,33 @@ def test_failed_refresh_falls_back_to_new_grant():
     auth._token = _Token("expired", "stale", 0)
     assert auth.access_token() == "a3"
     assert grants == ["refresh_token", "client_credentials"]
+
+
+def test_signs_in_at_the_environment_issuer_only():
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(200, json=META if "authorization-server" in req.url.path else {"access_token": "a"})
+
+    auth = ClientCredentials("cid", "secret").bind(Fetch("local", token="x").env)
+    auth._http = httpx.Client(transport=httpx.MockTransport(handler))
+    auth.access_token()
+    assert seen == [f"{ISSUER}/.well-known/oauth-authorization-server", f"{ISSUER}/oauth/token/"]
+    with pytest.raises(ValueError, match="issuer must use https"):
+        ClientCredentials("cid", "secret", issuer="http://evil.example")
+
+
+def test_cache_is_replaced_private_and_never_through_a_symlink(tmp_path):
+    target = tmp_path / "elsewhere"
+    target.write_text("keep")
+    cache = tmp_path / "aic" / "credentials.json"
+    cache.parent.mkdir()
+    cache.symlink_to(target)
+    BrowserLogin(client_id="pub", cache=cache).bind(Fetch("dev", token="x").env)._save(_Token("a", "r", 0))
+    assert target.read_text() == "keep"
+    assert not cache.is_symlink() and cache.stat().st_mode & 0o777 == 0o600
+    assert [p.name for p in cache.parent.iterdir()] == ["credentials.json"]
 
 
 def test_unbound_oauth_fails_clearly():

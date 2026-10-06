@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
+from urllib.parse import urlsplit
 
 _API = "https://grasp-daas.com/api"
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
+
+def require_secure(url: str, what: str) -> str:
+    """`url` if it is HTTPS, or HTTP on this machine; tokens and passwords never travel in clear text."""
+    split = urlsplit(url)
+    if split.scheme == "https" or (split.scheme == "http" and split.hostname in _LOOPBACK):
+        return url
+    raise ValueError(f"{what} must use https, or http on localhost: {url}")
 
 
 @dataclass(frozen=True)
@@ -21,6 +31,11 @@ class Environment:
     tools_url: str
     issuer: str
     resource: str
+
+    def __post_init__(self) -> None:
+        require_secure(self.fetch_url, "fetch_url")
+        require_secure(self.tools_url, "tools_url")
+        require_secure(self.issuer, "issuer")
 
 
 ENVIRONMENTS = {

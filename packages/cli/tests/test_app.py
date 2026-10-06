@@ -136,6 +136,54 @@ def test_login_with_email_prompts_password_and_mfa(monkeypatch):
     assert "Signed in to dev" in result.stderr
 
 
+def test_password_comes_from_the_environment_never_a_flag(monkeypatch):
+    created = []
+
+    class FakePassword:
+        def __init__(self, email, password, mfa_code):
+            created.append(password)
+
+        def bind(self, env):
+            return self
+
+        def login(self):
+            pass
+
+    monkeypatch.setattr(cli, "PasswordLogin", FakePassword)
+    result = runner.invoke(cli.app, ["-e", "dev", "login", "--email", "me@aic.no"], env={"AIC_PASSWORD": "pw"})
+    assert result.exit_code == 0 and created == ["pw"]
+    assert invoke("login", "--email", "me@aic.no", "--password", "pw").exit_code == 2
+
+
+HOSTILE = "\x1b]0;pwned\x07[red]x[/red]\x9b31m"
+
+
+def test_server_text_cannot_drive_the_terminal(monkeypatch, capsys):
+    def hostile(req):
+        if req.url.path.endswith("/datasets/"):
+            ds = {"name": HOSTILE, "columns": [], "partition_columns": []}
+            return httpx.Response(200, json={"data": [ds], "page": {"has_next": False}})
+        if req.url.path.endswith("/query/"):
+            cols = [{"name": HOSTILE, "type": "VARCHAR"}]
+            return httpx.Response(200, json={**RESULT, "columns": cols, "rows": [[HOSTILE]]}, headers={"X-Cache": "\x1b[2J"})
+        if req.url.path.endswith("/tools/"):
+            return httpx.Response(200, json={"data": [{"tool_id": HOSTILE, "descriptions": {"en": HOSTILE}}]})
+        return httpx.Response(400, json={"code": "bad", "message": HOSTILE})
+
+    monkeypatch.setattr(cli, "Fetch", lambda env: Fetch(env, token="t", transport=httpx.MockTransport(hostile)))
+    for args in (["datasets"], ["query", "SELECT 1"], ["--json", "datasets"], ["tools"]):
+        result = invoke(*args)
+        shown = result.stdout + result.stderr
+        assert "\x1b" not in shown and "\x07" not in shown and "\x9b" not in shown, args
+        assert "[red]x[/red]" in shown or "\\u001b" in shown, args
+
+    monkeypatch.setattr(sys, "argv", ["aic-fetch", "-e", "dev", "dataset", "gold.x"])
+    with pytest.raises(SystemExit):
+        cli.run()
+    shown = capsys.readouterr().err
+    assert "\x1b" not in shown and "[red]x[/red]" in shown
+
+
 def test_browser_sign_in_url_is_shown_by_the_cli(monkeypatch, capsys):
     monkeypatch.setattr(cli, "Fetch", lambda env: Fetch(env, auth=BrowserLogin(cache=False)))
     fetch = cli._fetch(cli.State(resolve("dev"), json=False))

@@ -25,15 +25,18 @@ aic-fetch -e local health
 aic-fetch -e dev logout
 ```
 
-| Option | Effect |
-|--------|--------|
-| `-e`, `--env` | `local`, `dev` or `prod`. Default: `$AIC_ENV`, then `prod` |
-| `--json` | JSON on stdout for scripts, e.g. `aic-fetch --json query '…' \| jq` |
-| `--fresh` | On `datasets`, `dataset`, `query`, `ask`: read S3 directly, bypassing the index and cache. Default: `$AIC_FRESH`. Needed locally without `ds-fetch-indexer` |
-| `--version` | CLI and SDK versions |
+
+| Option        | Effect                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-e`, `--env` | `local`, `dev` or `prod`. Default: `$AIC_ENV`, then `prod`                                                                                                  |
+| `--json`      | JSON on stdout for scripts, e.g. `aic-fetch --json query '…' | jq`                                                                                          |
+| `--fresh`     | On `datasets`, `dataset`, `query`, `ask`: read S3 directly, bypassing the index and cache. Default: `$AIC_FRESH`. Needed locally without `ds-fetch-indexer` |
+| `--version`   | CLI and SDK versions                                                                                                                                        |
+
 
 Tables go to stdout; progress, the generated SQL and row counts go to stderr, so output pipes
-cleanly. Errors print one line and exit with code 1.
+cleanly. Errors print one line and exit with code 1. Text from the service and the data lake is
+shown literally, with control characters replaced, so data cannot drive your terminal.
 
 ## Credentials
 

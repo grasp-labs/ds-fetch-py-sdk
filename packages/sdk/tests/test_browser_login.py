@@ -15,6 +15,7 @@ from ds_fetch_py_sdk.env import ENVIRONMENTS
 
 ISSUER = "https://auth-dev.grasp-daas.com"
 META = {
+    "issuer": ISSUER,
     "authorization_endpoint": f"{ISSUER}/oauth/authorize/",
     "token_endpoint": f"{ISSUER}/oauth/token/",
     "registration_endpoint": f"{ISSUER}/oauth/register",
@@ -29,8 +30,6 @@ def free_port():
 
 def identity(seen, meta=META):
     def handler(req):
-        if req.url.path.endswith("oauth-protected-resource"):
-            return httpx.Response(200, json={"authorization_servers": [ISSUER]})
         if req.url.path == "/.well-known/oauth-authorization-server":
             return httpx.Response(200, json=meta)
         if req.url.path == "/oauth/register":
