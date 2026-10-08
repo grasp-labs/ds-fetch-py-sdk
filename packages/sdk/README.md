@@ -78,10 +78,12 @@ Expired tokens are refreshed, and a 401 triggers one renewal and retry.
 - `validate(sql)` checks one `SELECT` as `query` would, without reading data, and returns a
   `Validation` with the canonical `sql`, the `datasets` it reads and the result `columns`.
   Invalid SQL raises `QueryError`, exactly as a query does.
-- `datasets(names=..., page_size=...)` iterates every granted dataset across pages, or only the
-  names you ask for; `dataset(name)` returns one. `Dataset.ref` is the name quoted for SQL, and
-  `file_count`, `row_count` and `byte_size` size the partitions you may read (rows and bytes for
-  gold only). Pages hold at most `MAX_PAGE_SIZE` (100) datasets, as the API serves them.
+- `datasets(names=..., layers=..., limit=...)` iterates every granted dataset across pages, or only
+  the names and layers (`gold`, `silver`, `bronze`) you ask for; `dataset(name)` returns one.
+  `Dataset.ref` is the name quoted for SQL, and `file_count`, `row_count` and `byte_size` size the
+  partitions you may read (rows and bytes for gold only). `limit` (default 100, at most
+  `MAX_LIMIT` = 500) is the page size: the server describes every dataset on a page within its
+  timeout, so prefer `layers=["gold"]` over a large page. An unknown layer raises `ValueError`.
 - `sql(question, datasets=...)` translates a question to SQL with ds-tools; `ask(...)` also runs it.
 - `tools.list()`, `tools.get(id)` and `tools.invoke(id, input)` reach every ds-tools tool with the
   same sign-in.

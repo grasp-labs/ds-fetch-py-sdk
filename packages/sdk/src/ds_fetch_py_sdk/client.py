@@ -7,7 +7,7 @@ import random
 import re
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self, get_args
 from urllib.parse import quote
 
 import httpx
@@ -22,8 +22,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 _FENCE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE)
-MAX_PAGE_SIZE = 100
+MAX_LIMIT = 500
 """The largest dataset page the API serves; it lowers anything above this."""
+Layer = Literal["gold", "silver", "bronze"]
+LAYERS: tuple[Layer, ...] = get_args(Layer)
 
 
 def _default_auth(env: Environment) -> httpx.Auth:
@@ -107,24 +109,36 @@ class Fetch:
         """Answer a natural-language question: translate it to SQL, then run it."""
         return self.query(self.sql(question, datasets=datasets), fresh=fresh)
 
-    def datasets(self, *, names: Sequence[str] = (), page_size: int = MAX_PAGE_SIZE, fresh: bool = False) -> Iterator[Dataset]:
-        """Every dataset and pipeline run you are granted, across pages; only `names` if given.
+    def datasets(
+        self,
+        *,
+        names: Sequence[str] = (),
+        layers: Sequence[Layer] = (),
+        limit: int = 100,
+        fresh: bool = False,
+    ) -> Iterator[Dataset]:
+        """Every dataset and pipeline run you are granted, across pages; only `names` and `layers` if given.
 
-        Names that do not exist or are not granted are left out. `page_size` is held to 1…`MAX_PAGE_SIZE`,
-        the range the API serves.
+        Names that do not exist or are not granted are left out. `limit` is the page size, held to
+        1…`MAX_LIMIT`; the server describes every dataset on a page within its timeout, so large pages risk a 504.
         """
-        page, size = 1, max(1, min(page_size, MAX_PAGE_SIZE))
+        if bad := sorted(set(layers) - set(LAYERS)):
+            raise ValueError(f"unknown layer {', '.join(bad)}; use {', '.join(LAYERS)}")
+        limit, offset, seen = max(1, min(limit, MAX_LIMIT)), 0, set[str]()
         while True:
-            params: dict[str, Any] = {"page": page, "page_size": size, "name": list(names)}
-            body = self._request("GET", self._url("/datasets/"), params=params, fresh=fresh).json()
-            yield from map(Dataset.parse, body["data"])
-            if not body["page"]["has_next"]:
+            params: dict[str, Any] = {"limit": limit, "offset": offset, "name": list(names), "layer": list(layers)}
+            body = self._request("GET", self._url("/dataset/"), params=params, fresh=fresh).json()
+            for ds in map(Dataset.parse, body["data"]):
+                if ds.name not in seen:
+                    seen.add(ds.name)
+                    yield ds
+            if not body["page"]["has_next"] or not body["data"]:
                 return
-            page += 1
+            offset += len(body["data"])
 
     def dataset(self, name: str, *, fresh: bool = False) -> Dataset:
         """One dataset by name, e.g. `gold.<dataset-id>` or `silver.<pipeline-id>/<job-id>`."""
-        url = self._url(f"/datasets/{quote(name, safe='')}/")
+        url = self._url(f"/dataset/{quote(name, safe='')}/")
         return Dataset.parse(self._request("GET", url, fresh=fresh).json())
 
     def health(self) -> dict[str, Any]:

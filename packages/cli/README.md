@@ -16,6 +16,7 @@ aic-fetch -e dev login                       # browser sign-in, including SSO
 aic-fetch -e dev login --email me@aic.no     # email and password; prompts for MFA if enabled
 aic-fetch -e dev datasets                    # what you can query, with files, rows and size
 aic-fetch -e dev datasets -n gold.5003105c-8a84-5f77-ab74-5e57003112b8   # only these datasets
+aic-fetch -e dev datasets -l silver -l bronze  # only these layers
 aic-fetch -e dev dataset gold.5003105c-8a84-5f77-ab74-5e57003112b8
 aic-fetch -e dev query 'SELECT department, count(*) FROM gold."5003105c-8a84-5f77-ab74-5e57003112b8" GROUP BY 1'
 aic-fetch -e dev query - < report.sql        # SQL from a file or pipe

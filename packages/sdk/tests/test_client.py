@@ -131,39 +131,75 @@ def test_network_failures_retry_then_raise_network_error():
 
 def test_datasets_paginates():
     def handler(req):
-        page = int(req.url.params["page"])
-        ds = {"name": f"gold.{page}", "columns": [], "partition_columns": []}
-        return httpx.Response(200, json={"data": [ds], "page": {"has_next": page < 2}})
+        offset = int(req.url.params["offset"])
+        ds = {"name": f"gold.{offset}", "columns": [], "partition_columns": []}
+        return httpx.Response(200, json={"data": [ds], "page": {"has_next": offset < 1}})
 
-    assert [d.name for d in make(handler).datasets()] == ["gold.1", "gold.2"]
+    assert [d.name for d in make(handler).datasets(limit=1)] == ["gold.0", "gold.1"]
 
 
 def test_dataset_name_is_url_encoded():
     def handler(req):
-        assert req.url.raw_path == b"/api/fetch-dev/v1/datasets/silver.p%2Fj/"
+        assert req.url.raw_path == b"/api/fetch-dev/v1/dataset/silver.p%2Fj/"
         return httpx.Response(200, json={"name": "silver.p/j", "columns": [], "partition_columns": []})
 
     assert make(handler).dataset("silver.p/j").ref == 'silver."p/j"'
 
 
-def test_datasets_sends_repeated_names():
+def test_datasets_sends_repeated_names_and_layers():
     def handler(req):
         assert req.url.params.get_list("name") == ["gold.a", "gold.b"]
+        assert req.url.params.get_list("layer") == ["gold", "silver"]
         return httpx.Response(200, json={"data": [], "page": {"has_next": False}})
 
-    assert list(make(handler).datasets(names=["gold.a", "gold.b"])) == []
+    assert list(make(handler).datasets(names=["gold.a", "gold.b"], layers=["gold", "silver"])) == []
 
 
-def test_datasets_holds_the_page_size_to_what_the_api_serves():
+def test_datasets_holds_the_limit_to_what_the_api_serves():
     sent = []
 
     def handler(req):
-        sent.append(req.url.params["page_size"])
+        sent.append(req.url.params["limit"])
         return httpx.Response(200, json={"data": [], "page": {"has_next": False}})
 
+    fetch = make(handler)
     for asked in (1_000_000, 0, 20):
-        list(make(handler).datasets(page_size=asked))
-    assert sent == ["100", "1", "20"]
+        list(fetch.datasets(limit=asked))
+    list(fetch.datasets())
+    assert sent == ["500", "1", "20", "100"]
+
+
+def test_datasets_pages_by_what_the_server_returned():
+    names = [f"gold.{i}" for i in range(5)]
+    offsets = []
+
+    def handler(req):
+        offset = int(req.url.params["offset"])
+        offsets.append(offset)
+        data = [{"name": n, "columns": []} for n in names[offset : offset + 2]]
+        return httpx.Response(200, json={"data": data, "page": {"has_next": offset + 2 < len(names)}})
+
+    assert [d.name for d in make(handler).datasets(limit=500)] == names
+    assert offsets == [0, 2, 4]
+
+
+def test_datasets_skips_repeats_and_stops_on_an_empty_page():
+    pages = [["gold.a", "gold.b"], ["gold.b", "gold.c"], []]
+
+    def handler(req):
+        data = [{"name": n, "columns": []} for n in pages.pop(0)]
+        return httpx.Response(200, json={"data": data, "page": {"has_next": True}})
+
+    assert [d.name for d in make(handler).datasets()] == ["gold.a", "gold.b", "gold.c"]
+    assert pages == []
+
+
+def test_datasets_rejects_an_unknown_layer_before_any_request():
+    def handler(req):
+        raise AssertionError("no request expected")
+
+    with pytest.raises(ValueError, match="unknown layer platinum; use gold, silver, bronze"):
+        list(make(handler).datasets(layers=["gold", "platinum"]))  # type: ignore[list-item]
 
 
 def test_validate_returns_the_validation():
