@@ -96,6 +96,12 @@ class Env(StrEnum):
     prod = "prod"
 
 
+class Layer(StrEnum):
+    gold = "gold"
+    silver = "silver"
+    bronze = "bronze"
+
+
 @dataclass(frozen=True)
 class State:
     env: Environment
@@ -322,6 +328,7 @@ def ask(
 def datasets(
     ctx: typer.Context,
     name: Annotated[list[str] | None, typer.Option("--name", "-n", help="Only this dataset, unquoted. Repeatable.")] = None,
+    layer: Annotated[list[Layer] | None, typer.Option("--layer", "-l", help="Only this layer. Repeatable.")] = None,
     fresh: Fresh = False,
 ) -> None:
     """List the datasets you can query, with their column counts and size.
@@ -332,12 +339,13 @@ def datasets(
     [bold]Examples[/bold]
       aic-fetch -e dev datasets
       aic-fetch -e dev datasets -n gold.<dataset-id> -n gold.<other-id>
+      aic-fetch -e dev datasets -l silver -l bronze
       aic-fetch -e local datasets --fresh
       aic-fetch --json datasets | jq -r '.[].name'
     """
     state: State = ctx.obj
     with _fetch(state) as fetch, err.status("Listing datasets…"):
-        found = list(fetch.datasets(names=name or (), fresh=fresh))
+        found = list(fetch.datasets(names=name or (), layers=[lv.value for lv in layer or ()], fresh=fresh))
     if state.json:
         _json([asdict(ds) for ds in found])
         return

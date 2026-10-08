@@ -33,9 +33,9 @@ def handler(req):
         if sql == "bad":
             return httpx.Response(422, json={"details": [{"field": "sql", "loc": "body", "code": "syntax_error"}]})
         return httpx.Response(200, json={**RESULT, "rows": [[sql, None]]}, headers={"X-Cache": "MISS"})
-    if path.endswith("/datasets/"):
+    if path.endswith("/dataset/"):
         return httpx.Response(200, json={"data": [DATASET], "page": {"has_next": False}})
-    if "/datasets/" in path:
+    if "/dataset/" in path:
         return httpx.Response(200, json=DATASET)
     if path.endswith("/invoke/"):
         return httpx.Response(200, json={"tool_use_id": "u", "output": "SELECT 1"})
@@ -116,20 +116,22 @@ def test_datasets_dataset_tools_health():
     assert json.loads(invoke("--json", "health").stdout)["version"] == "v1.0.0"
 
 
-def test_datasets_filters_by_name(monkeypatch):
+def test_datasets_filters_by_name_and_layer(monkeypatch):
     def recording(req):
         assert req.url.params.get_list("name") == ["gold.d1", "gold.d2"]
+        assert req.url.params.get_list("layer") == ["gold", "silver"]
         return handler(req)
 
     monkeypatch.setattr(cli, "Fetch", lambda env: Fetch(env, token="t", transport=httpx.MockTransport(recording)))
-    assert invoke("datasets", "-n", "gold.d1", "-n", "gold.d2").exit_code == 0
+    assert invoke("datasets", "-n", "gold.d1", "-n", "gold.d2", "-l", "gold", "-l", "silver").exit_code == 0
+    assert invoke("datasets", "-l", "platinum").exit_code == 2
 
 
 def test_runs_show_no_rows_or_bytes(monkeypatch):
     run = {"name": "silver.p/j", "columns": [], "partition_columns": [], "file_count": 2}
 
     def without_sizes(req):
-        if req.url.path.endswith("/datasets/"):
+        if req.url.path.endswith("/dataset/"):
             return httpx.Response(200, json={"data": [run], "page": {"has_next": False}})
         return httpx.Response(200, json=run)
 
@@ -205,7 +207,7 @@ HOSTILE = "\x1b]0;pwned\x07[red]x[/red]\x9b31m"
 
 def test_server_text_cannot_drive_the_terminal(monkeypatch, capsys):
     def hostile(req):
-        if req.url.path.endswith("/datasets/"):
+        if req.url.path.endswith("/dataset/"):
             ds = {"name": HOSTILE, "columns": [], "partition_columns": []}
             return httpx.Response(200, json={"data": [ds], "page": {"has_next": False}})
         if req.url.path.endswith("/query/"):
