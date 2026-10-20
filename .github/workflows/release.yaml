@@ -15,6 +15,9 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - name: Verify tag matches both packages and the CLI's SDK pin
@@ -34,8 +37,6 @@ jobs:
           name: dist-packages
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_KEY }}
 
   github-release:
     needs: publish
